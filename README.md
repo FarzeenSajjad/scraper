@@ -1,0 +1,109 @@
+# The polite scraper — FlyRank Internship, Backend Track, W5 · A9
+
+A small, polite scraping pipeline for [Books to Scrape](https://books.toscrape.com), a public
+sandbox built for practising web scraping. It downloads the first 3 catalogue pages, visits all
+60 book pages it finds, turns the messy HTML into clean, schema-checked JSON, survives a broken
+page without crashing, and writes an honest report at the end of every run.
+
+## Target classification (Stage 0)
+
+- **Site:** `books.toscrape.com`, part of the `toscrape.com` sandbox network.
+- **Why it's fair game:** the site's own homepage describes itself as "a fictional bookstore that
+  desperately wants to be scraped... a safe place for beginners learning web scraping and for
+  developers validating their scraping technologies." Every page also carries the banner
+  *"Warning! This is a demo website for web scraping purposes."* That is explicit, on-page
+  permission, and it's the only kind of site this assignment touches.
+- **Scope:** the first 3 catalogue pages only (`catalogue/page-1.html` → `page-3.html`), plus the
+  ~60 book detail pages linked from them. Nothing else on the site is requested.
+- **robots.txt result:** `https://books.toscrape.com/robots.txt` returns a **404** — no robots
+  file found. A missing file is not permission by itself; the on-page statement above is what
+  makes this target appropriate.
+- **What is collected:** title, price, availability, star rating, description, and the book's own
+  URL — public catalogue data, nothing behind a login.
+
+**I will not reuse this code on another site without checking its rules and terms first.**
+
+## Lane
+
+Python 3.10+ · `requests` (HTTP) · `BeautifulSoup` (HTML parsing) · `Pydantic` (schema validation)
+
+## Run it
+
+```bash
+python -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+python src/main.py
+```
+
+First run prints `FETCH` for every request and populates `cache/`. Re-running prints `CACHE HIT`
+for everything already saved and finishes almost instantly. Outputs land in `output/`:
+
+- `output/books.json` — validated, deduplicated records (60 of them on a clean run)
+- `output/errors.json` — any record that failed validation, with the reason
+- `output/run-report.json` — counts and timing for the run
+
+## Record schema
+
+Each validated record in `books.json`:
+
+```json
+{
+  "title": "A Light in the Attic",
+  "product_url": "https://books.toscrape.com/catalogue/a-light-in-the-attic_1000/index.html",
+  "price_text": "£51.77",
+  "price_gbp": 51.77,
+  "availability_text": "In stock (22 available)",
+  "rating_text": "Three",
+  "rating_value": 3,
+  "description": "...",
+  "source_page": "https://books.toscrape.com/catalogue/page-1.html",
+  "fetched_at": "2026-08-11T10:00:00Z"
+}
+```
+
+`product_url` is treated as each record's canonical identity — re-running the scraper updates
+records, it never duplicates them (idempotent).
+
+## Politeness rules
+
+- **User-agent:** every request identifies itself as `FlyRankInternshipA9/1.0 (+repo link)`.
+- **Timeout:** every request gives up after 8 seconds rather than hanging forever.
+- **Delay:** at least 500ms between real (non-cached) requests to the site.
+- **Cache:** every page is saved to `cache/` on first fetch; re-runs during development read the
+  cache and never hit the site again for the same URL.
+- **Status checks:** only a `200` is treated as a page to parse. `5xx`/timeouts get one retry;
+  `404` and `403` are never retried.
+
+## Why no browser was needed
+
+Every field this scraper collects — title, price, availability, rating, description — is already
+present in the HTML the server sends back on the first request. There's no client-side JavaScript
+building the page afterward, so rendering it in a real or headless browser would only add cost
+(startup time, memory, complexity) for no extra data.
+
+## A deliberately broken run
+
+Setting `INJECT_BROKEN_URL = True` in `src/main.py` adds one made-up book URL to the list before
+fetching. The run still finishes, `books.json` still has the 60 good records, and
+`run-report.json` reports `"failed_pages": 1`. This is how Stage 5 is proven — by breaking things
+on our own list, never by hammering the real site.
+
+## Sample run report
+
+```json
+PASTE_YOUR_REAL_run-report.json_HERE_AFTER_RUNNING
+```
+
+## Ethics note
+
+Use an official API instead of scraping wherever one exists. Never bypass logins, paywalls, CAPTCHAs,
+or an explicit block — if a site says no, that's the end of it. Collect only the fields the task
+actually needs, keep the request rate low, and identify yourself honestly in every request.
+
+## Known limitation
+
+`source_page` is recorded per catalogue page as discovered (page 1, 2, or 3), but if a book is
+somehow linked from more than one catalogue page, only the first source page it was seen on is
+kept — this is a practice sandbox with a stable, unique-per-page listing, so that edge case does
+not occur here in practice.
