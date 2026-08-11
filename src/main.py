@@ -16,12 +16,16 @@ from typing import Optional
 from urllib.parse import urljoin
 
 import requests
+from bs4 import BeautifulSoup
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
 
 BASE_URL = "https://books.toscrape.com/"
+CATALOGUE_START = urljoin(BASE_URL, "catalogue/page-1.html")
+MAX_CATALOGUE_PAGES = 3
+
 USER_AGENT = "FlyRankInternshipA9/1.0 (+https://github.com/FarzeenSajjad/scraper)"
 TIMEOUT_SECONDS = 8
 DELAY_SECONDS = 0.6  # >= 500ms between real (non-cached) requests
@@ -112,6 +116,41 @@ def fetch(url: str, retry_on_failure: bool = True) -> tuple[Optional[str], dict]
     return None, {"source": "failed", "status_code": last_status, "size": 0}
 
 
+# ---------------------------------------------------------------------------
+# Stage 2 - discover all three catalogue pages, collect unique book URLs
+# ---------------------------------------------------------------------------
+
+def discover_book_urls() -> list[tuple[str, str]]:
+    """Returns a de-duplicated list of (book_url, source_catalogue_page) pairs."""
+    pairs: list[tuple[str, str]] = []
+    page_url = CATALOGUE_START
+    pages_seen = 0
+
+    while page_url and pages_seen < MAX_CATALOGUE_PAGES:
+        html, meta = fetch(page_url)
+        pages_seen += 1
+        if html is None:
+            print(f"[STAGE 2] could not load catalogue page {page_url}, stopping discovery")
+            break
+
+        soup = BeautifulSoup(html, "html.parser")
+
+        for anchor in soup.select("article.product_pod h3 a"):
+            href = anchor.get("href")
+            if href:
+                pairs.append((urljoin(page_url, href), page_url))
+
+        next_link = soup.select_one("li.next a")
+        page_url = urljoin(page_url, next_link["href"]) if next_link else None
+
+    seen: dict[str, str] = {}
+    for url, source in pairs:
+        seen.setdefault(url, source)  # de-dupe, keep first source page
+
+    print(f"[STAGE 2] catalogue_pages={pages_seen} discovered={len(pairs)} unique_urls={len(seen)}")
+    return list(seen.items())
+
+
 if __name__ == "__main__":
     check_robots()
-    fetch(urljoin(BASE_URL, "catalogue/page-1.html"))
+    discover_book_urls()
