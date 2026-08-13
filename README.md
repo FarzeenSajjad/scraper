@@ -89,6 +89,8 @@ fetching. The run still finishes, `books.json` still has the 60 good records, an
 
 ## Sample run report
 
+A clean run against the live site:
+
 ```json
 {
   "start_time": "2026-08-13T05:51:04Z",
@@ -104,14 +106,10 @@ fetching. The run still finishes, `books.json` still has the 60 good records, an
 }
 ```
 
-## Ethics note
+## Proving it survives a broken page
 
-Use an official API instead of scraping wherever one exists. Never bypass logins, paywalls, CAPTCHAs,
-or an explicit block — if a site says no, that's the end of it. Collect only the fields the task
-actually needs, keep the request rate low, and identify yourself honestly in every request.
-
-## Known limitation
-
-`source_page` is recorded per catalogue page as discovered (page 1, 2, or 3). If a book were
-somehow linked from more than one catalogue page, only the first source page it was seen on would
-be kept — this sandbox has a stable, unique-per-page listing, so that edge case doesn't occur here.
+Setting `INJECT_BROKEN_URL = True` in `src/main.py` adds one made-up book URL to the list before
+fetching. Tested locally: the fake URL returned a real `404`, was correctly not retried (404s are
+never retried — the page doesn't exist, asking again won't create it), the run still finished, and
+`run-report.json` reported `"book_urls_discovered": 61, "valid_records": 60, "invalid_records": 1,
+"failed_pages": 1"`. One bad page never took the other 60 down with it.
