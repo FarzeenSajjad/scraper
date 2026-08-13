@@ -1,5 +1,4 @@
 ﻿"""
-FlyRank Internship - Backend Track - W5 - A9
 The polite scraper
 
 Target: https://books.toscrape.com (a public sandbox built for scraping practice)
@@ -9,8 +8,10 @@ Run:
     python src/main.py
 """
 
+import json
 import re
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urljoin
@@ -26,7 +27,7 @@ BASE_URL = "https://books.toscrape.com/"
 CATALOGUE_START = urljoin(BASE_URL, "catalogue/page-1.html")
 MAX_CATALOGUE_PAGES = 3
 
-USER_AGENT = "FlyRankInternshipA9/1.0 (+https://github.com/FarzeenSajjad/scraper)"
+USER_AGENT = "PoliteBookScraper/1.0 (+https://github.com/FarzeenSajjad/scraper)"
 TIMEOUT_SECONDS = 8
 DELAY_SECONDS = 0.6  # >= 500ms between real (non-cached) requests
 
@@ -38,7 +39,7 @@ SESSION.headers.update({"User-Agent": USER_AGENT})
 
 
 # ---------------------------------------------------------------------------
-# Stage 0 - classify the target (robots.txt check, run once, printed)
+# Robots check
 # ---------------------------------------------------------------------------
 
 def check_robots() -> str:
@@ -59,7 +60,7 @@ def check_robots() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Stage 1 - fetch once, cache once
+# Fetch + cache
 # ---------------------------------------------------------------------------
 
 def cache_path_for(url: str) -> Path:
@@ -89,6 +90,7 @@ def fetch(url: str, retry_on_failure: bool = True) -> tuple[Optional[str], dict]
     for attempt in range(1, attempts + 1):
         try:
             resp = SESSION.get(url, timeout=TIMEOUT_SECONDS)
+            resp.encoding = "utf-8"  # site serves UTF-8; avoid requests mis-guessing and mangling £ etc.
             last_status = resp.status_code
         except requests.RequestException as exc:
             print(f"FETCH FAILED {url} (attempt {attempt}): {exc}")
@@ -117,7 +119,7 @@ def fetch(url: str, retry_on_failure: bool = True) -> tuple[Optional[str], dict]
 
 
 # ---------------------------------------------------------------------------
-# Stage 2 - discover all three catalogue pages, collect unique book URLs
+# Discover catalogue pages
 # ---------------------------------------------------------------------------
 
 def discover_book_urls() -> list[tuple[str, str]]:
@@ -151,6 +153,56 @@ def discover_book_urls() -> list[tuple[str, str]]:
     return list(seen.items())
 
 
+# ---------------------------------------------------------------------------
+# Extract raw record
+# ---------------------------------------------------------------------------
+
+def extract_raw_record(url: str, html: str, source_page: str) -> dict:
+    soup = BeautifulSoup(html, "html.parser")
+    product = soup.select_one("div.product_main")
+
+    title = product.select_one("h1").get_text(strip=True) if product else None
+
+    price_text = None
+    price_el = soup.select_one("p.price_color")
+    if price_el:
+        price_text = price_el.get_text(strip=True)
+
+    availability_text = None
+    avail_el = soup.select_one("p.availability")
+    if avail_el:
+        availability_text = avail_el.get_text(strip=True)
+
+    rating_text = None
+    rating_el = soup.select_one("p.star-rating")
+    if rating_el:
+        classes = rating_el.get("class", [])
+        rating_text = next((c for c in classes if c != "star-rating"), None)
+
+    description = None
+    desc_heading = soup.find("div", id="product_description")
+    if desc_heading:
+        desc_p = desc_heading.find_next_sibling("p")
+        if desc_p:
+            description = desc_p.get_text(strip=True)
+
+    return {
+        "title": title,
+        "product_url": url,
+        "price_text": price_text,
+        "availability_text": availability_text,
+        "rating_text": rating_text,
+        "description": description,
+        "source_page": source_page,
+        "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+    }
+
+
 if __name__ == "__main__":
     check_robots()
-    discover_book_urls()
+    urls = discover_book_urls()
+    first_url, first_source = urls[0]
+    html, meta = fetch(first_url)
+    record = extract_raw_record(first_url, html, first_source)
+    print(json.dumps(record, indent=2, ensure_ascii=False))
+    print("[STAGE 3] detail_pages=1 (demo run - fetches all 60 in Stage 5)")
