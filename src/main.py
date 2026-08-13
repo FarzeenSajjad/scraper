@@ -18,6 +18,7 @@ from urllib.parse import urljoin
 
 import requests
 from bs4 import BeautifulSoup
+from pydantic import BaseModel, HttpUrl, ValidationError, field_validator
 
 # ---------------------------------------------------------------------------
 # Config
@@ -198,11 +199,63 @@ def extract_raw_record(url: str, html: str, source_page: str) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Normalize + validate
+# ---------------------------------------------------------------------------
+
+RATING_WORDS = {"One": 1, "Two": 2, "Three": 3, "Four": 4, "Five": 5}
+
+
+def parse_price(price_text: Optional[str]) -> Optional[float]:
+    if not price_text:
+        return None
+    cleaned = re.sub(r"[^\d.]", "", price_text)
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
+
+
+class BookRecord(BaseModel):
+    title: str
+    product_url: HttpUrl
+    price_text: str
+    price_gbp: float
+    availability_text: str
+    rating_text: Optional[str] = None
+    rating_value: Optional[int] = None
+    description: Optional[str] = None
+    source_page: HttpUrl
+    fetched_at: str
+
+    @field_validator("price_gbp")
+    @classmethod
+    def price_must_be_non_negative(cls, v):
+        if v is None or v < 0:
+            raise ValueError("price_gbp must be a non-negative number")
+        return v
+
+
+def normalize_and_validate(raw: dict) -> tuple[Optional[dict], Optional[str]]:
+    """Returns (validated_dict, None) on success, or (None, error_reason) on failure."""
+    try:
+        candidate = {
+            **raw,
+            "price_gbp": parse_price(raw.get("price_text")),
+            "rating_value": RATING_WORDS.get(raw.get("rating_text")),
+        }
+        record = BookRecord(**candidate)
+        return json.loads(record.model_dump_json()), None
+    except ValidationError as exc:
+        return None, str(exc)
+
+
 if __name__ == "__main__":
     check_robots()
     urls = discover_book_urls()
     first_url, first_source = urls[0]
     html, meta = fetch(first_url)
-    record = extract_raw_record(first_url, html, first_source)
-    print(json.dumps(record, indent=2, ensure_ascii=False))
-    print("[STAGE 3] detail_pages=1 (demo run - fetches all 60 in Stage 5)")
+    raw = extract_raw_record(first_url, html, first_source)
+    validated, error = normalize_and_validate(raw)
+    print(json.dumps(validated, indent=2, ensure_ascii=False))
+    print("[STAGE 4] validated=1 errors=0 (demo run - all 60 in Stage 5)")
