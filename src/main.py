@@ -20,9 +20,7 @@ import requests
 from bs4 import BeautifulSoup
 from pydantic import BaseModel, HttpUrl, ValidationError, field_validator
 
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
+
 
 BASE_URL = "https://books.toscrape.com/"
 CATALOGUE_START = urljoin(BASE_URL, "catalogue/page-1.html")
@@ -34,14 +32,17 @@ DELAY_SECONDS = 0.6  # >= 500ms between real (non-cached) requests
 
 ROOT = Path(__file__).resolve().parent.parent
 CACHE_DIR = ROOT / "cache"
+OUTPUT_DIR = ROOT / "output"
+
+
+INJECT_BROKEN_URL = False
+FAKE_BROKEN_URL = urljoin(BASE_URL, "catalogue/this-book-does-not-exist_9999/index.html")
 
 SESSION = requests.Session()
 SESSION.headers.update({"User-Agent": USER_AGENT})
 
 
-# ---------------------------------------------------------------------------
-# Robots check
-# ---------------------------------------------------------------------------
+
 
 def check_robots() -> str:
     """Fetch robots.txt once and return a short human-readable summary."""
@@ -60,9 +61,7 @@ def check_robots() -> str:
     return summary
 
 
-# ---------------------------------------------------------------------------
-# Fetch + cache
-# ---------------------------------------------------------------------------
+
 
 def cache_path_for(url: str) -> Path:
     """Turn a URL into a safe, deterministic cache filename."""
@@ -119,9 +118,7 @@ def fetch(url: str, retry_on_failure: bool = True) -> tuple[Optional[str], dict]
     return None, {"source": "failed", "status_code": last_status, "size": 0}
 
 
-# ---------------------------------------------------------------------------
-# Discover catalogue pages
-# ---------------------------------------------------------------------------
+
 
 def discover_book_urls() -> list[tuple[str, str]]:
     """Returns a de-duplicated list of (book_url, source_catalogue_page) pairs."""
@@ -150,13 +147,13 @@ def discover_book_urls() -> list[tuple[str, str]]:
     for url, source in pairs:
         seen.setdefault(url, source)  # de-dupe, keep first source page
 
+    if INJECT_BROKEN_URL:
+        seen.setdefault(FAKE_BROKEN_URL, CATALOGUE_START)
+
     print(f"[STAGE 2] catalogue_pages={pages_seen} discovered={len(pairs)} unique_urls={len(seen)}")
     return list(seen.items())
 
 
-# ---------------------------------------------------------------------------
-# Extract raw record
-# ---------------------------------------------------------------------------
 
 def extract_raw_record(url: str, html: str, source_page: str) -> dict:
     soup = BeautifulSoup(html, "html.parser")
@@ -198,10 +195,6 @@ def extract_raw_record(url: str, html: str, source_page: str) -> dict:
         "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
     }
 
-
-# ---------------------------------------------------------------------------
-# Normalize + validate
-# ---------------------------------------------------------------------------
 
 RATING_WORDS = {"One": 1, "Two": 2, "Three": 3, "Four": 4, "Five": 5}
 
@@ -250,12 +243,78 @@ def normalize_and_validate(raw: dict) -> tuple[Optional[dict], Optional[str]]:
         return None, str(exc)
 
 
+
+
+def run() -> None:
+    start = time.monotonic()
+    start_time_iso = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+    robots_summary = check_robots()
+    book_urls = discover_book_urls()
+
+    valid_records: dict[str, dict] = {}  # keyed by product_url -> idempotent
+    error_records: list[dict] = []
+    failed_pages = 0
+    cache_hits = 0
+    pages_fetched = 0
+
+    for url, source_page in book_urls:
+        html, meta = fetch(url)
+
+        if meta["source"] == "cache":
+            cache_hits += 1
+        elif meta["source"] == "network":
+            pages_fetched += 1
+
+        if html is None:
+            failed_pages += 1
+            error_records.append({
+                "product_url": url,
+                "reason": f"fetch failed (status={meta.get('status_code')})",
+            })
+            continue
+
+        raw = extract_raw_record(url, html, source_page)
+        validated, error_reason = normalize_and_validate(raw)
+
+        if validated is None:
+            error_records.append({"product_url": url, "reason": error_reason})
+            continue
+
+        valid_records[validated["product_url"]] = validated  # de-dupe by canonical URL
+
+    duration_seconds = round(time.monotonic() - start, 2)
+
+    books_out = sorted(valid_records.values(), key=lambda r: r["title"])
+    (OUTPUT_DIR / "books.json").write_text(
+        json.dumps(books_out, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    (OUTPUT_DIR / "errors.json").write_text(
+        json.dumps(error_records, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+    report = {
+        "start_time": start_time_iso,
+        "duration_seconds": duration_seconds,
+        "robots_check": robots_summary,
+        "catalogue_pages_requested": MAX_CATALOGUE_PAGES,
+        "book_urls_discovered": len(book_urls),
+        "pages_fetched_from_network": pages_fetched,
+        "cache_hits": cache_hits,
+        "valid_records": len(valid_records),
+        "invalid_records": len(error_records),
+        "failed_pages": failed_pages,
+    }
+    (OUTPUT_DIR / "run-report.json").write_text(
+        json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+    print("\n[RUN REPORT]")
+    print(json.dumps(report, indent=2))
+
+
 if __name__ == "__main__":
-    check_robots()
-    urls = discover_book_urls()
-    first_url, first_source = urls[0]
-    html, meta = fetch(first_url)
-    raw = extract_raw_record(first_url, html, first_source)
-    validated, error = normalize_and_validate(raw)
-    print(json.dumps(validated, indent=2, ensure_ascii=False))
-    print("[STAGE 4] validated=1 errors=0 (demo run - all 60 in Stage 5)")
+    run()
