@@ -1,0 +1,12 @@
+{
+  "start_time": "2026-08-13T05:51:04Z",
+  "duration_seconds": 171.38,
+  "robots_check": "no robots file found (404)",
+  "catalogue_pages_requested": 3,
+  "book_urls_discovered": 60,
+  "pages_fetched_from_network": 60,
+  "cache_hits": 0,
+  "valid_records": 60,
+  "invalid_records": 0,
+  "failed_pages": 0
+}

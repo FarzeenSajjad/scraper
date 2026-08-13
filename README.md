@@ -1,18 +1,18 @@
-# The polite scraper — FlyRank Internship, Backend Track, W5 · A9
+# The polite scraper
 
 A small, polite scraping pipeline for [Books to Scrape](https://books.toscrape.com), a public
 sandbox built for practising web scraping. It downloads the first 3 catalogue pages, visits all
 60 book pages it finds, turns the messy HTML into clean, schema-checked JSON, survives a broken
 page without crashing, and writes an honest report at the end of every run.
 
-## Target classification (Stage 0)
+## Target classification
 
 - **Site:** `books.toscrape.com`, part of the `toscrape.com` sandbox network.
 - **Why it's fair game:** the site's own homepage describes itself as "a fictional bookstore that
   desperately wants to be scraped... a safe place for beginners learning web scraping and for
   developers validating their scraping technologies." Every page also carries the banner
   *"Warning! This is a demo website for web scraping purposes."* That is explicit, on-page
-  permission, and it's the only kind of site this assignment touches.
+  permission, and it's the only kind of site this project touches.
 - **Scope:** the first 3 catalogue pages only (`catalogue/page-1.html` → `page-3.html`), plus the
   ~60 book detail pages linked from them. Nothing else on the site is requested.
 - **robots.txt result:** `https://books.toscrape.com/robots.txt` returns a **404** — no robots
@@ -36,16 +36,14 @@ pip install -r requirements.txt
 python src/main.py
 ```
 
-First run prints `FETCH` for every request and populates `cache/`. Re-running prints `CACHE HIT`
-for everything already saved and finishes almost instantly. Outputs land in `output/`:
+First run fetches everything from the network and populates `cache/`. Re-running reads from the
+cache and finishes in a few seconds. Outputs land in `output/`:
 
-- `output/books.json` — validated, deduplicated records (60 of them on a clean run)
+- `output/books.json` — validated, deduplicated records (60 on a clean run)
 - `output/errors.json` — any record that failed validation, with the reason
 - `output/run-report.json` — counts and timing for the run
 
 ## Record schema
-
-Each validated record in `books.json`:
 
 ```json
 {
@@ -58,16 +56,16 @@ Each validated record in `books.json`:
   "rating_value": 3,
   "description": "...",
   "source_page": "https://books.toscrape.com/catalogue/page-1.html",
-  "fetched_at": "2026-08-11T10:00:00Z"
+  "fetched_at": "2026-08-13T05:38:45Z"
 }
 ```
 
-`product_url` is treated as each record's canonical identity — re-running the scraper updates
-records, it never duplicates them (idempotent).
+`product_url` is each record's canonical identity — re-running the scraper updates records, it
+never duplicates them (idempotent).
 
 ## Politeness rules
 
-- **User-agent:** every request identifies itself as `FlyRankInternshipA9/1.0 (+repo link)`.
+- **User-agent:** every request identifies itself as `PoliteBookScraper/1.0 (+repo link)`.
 - **Timeout:** every request gives up after 8 seconds rather than hanging forever.
 - **Delay:** at least 500ms between real (non-cached) requests to the site.
 - **Cache:** every page is saved to `cache/` on first fetch; re-runs during development read the
@@ -86,13 +84,24 @@ building the page afterward, so rendering it in a real or headless browser would
 
 Setting `INJECT_BROKEN_URL = True` in `src/main.py` adds one made-up book URL to the list before
 fetching. The run still finishes, `books.json` still has the 60 good records, and
-`run-report.json` reports `"failed_pages": 1`. This is how Stage 5 is proven — by breaking things
-on our own list, never by hammering the real site.
+`run-report.json` reports `"failed_pages": 1`. Verified locally: the fake URL returned a real
+`404`, was correctly not retried, and the 60 good books were unaffected.
 
 ## Sample run report
 
 ```json
-PASTE_YOUR_REAL_run-report.json_HERE_AFTER_RUNNING
+{
+  "start_time": "2026-08-13T05:51:04Z",
+  "duration_seconds": 171.38,
+  "robots_check": "no robots file found (404)",
+  "catalogue_pages_requested": 3,
+  "book_urls_discovered": 60,
+  "pages_fetched_from_network": 60,
+  "cache_hits": 0,
+  "valid_records": 60,
+  "invalid_records": 0,
+  "failed_pages": 0
+}
 ```
 
 ## Ethics note
@@ -103,7 +112,6 @@ actually needs, keep the request rate low, and identify yourself honestly in eve
 
 ## Known limitation
 
-`source_page` is recorded per catalogue page as discovered (page 1, 2, or 3), but if a book is
-somehow linked from more than one catalogue page, only the first source page it was seen on is
-kept — this is a practice sandbox with a stable, unique-per-page listing, so that edge case does
-not occur here in practice.
+`source_page` is recorded per catalogue page as discovered (page 1, 2, or 3). If a book were
+somehow linked from more than one catalogue page, only the first source page it was seen on would
+be kept — this sandbox has a stable, unique-per-page listing, so that edge case doesn't occur here.
